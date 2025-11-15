@@ -6,21 +6,29 @@ from urllib.parse import urlparse
 def init_database():
     """Create tables automatically on deployment"""
     
-    # Get database URL from environment
     db_url_str = os.environ.get('DATABASE_URL')
     if not db_url_str:
-        print("No DATABASE_URL found, skipping initialization")
-        return
-    
-    db_url = urlparse(db_url_str)
-    
-    DB_CONFIG = {
-        'dbname': db_url.path[1:],
-        'user': db_url.username,
-        'password': db_url.password,
-        'host': db_url.hostname,
-        'port': db_url.port or '5432'
-    }
+        print("No DATABASE_URL found, using local config")
+        DB_CONFIG = {
+            'dbname': 'todo_db',
+            'user': 'todo_user',
+            'password': 'thinkpad',
+            'host': 'localhost',
+            'port': '5432'
+        }
+    else:
+        # Fix Render's postgres:// to postgresql://
+        if db_url_str.startswith('postgres://'):
+            db_url_str = db_url_str.replace('postgres://', 'postgresql://', 1)
+        
+        db_url = urlparse(db_url_str)
+        DB_CONFIG = {
+            'dbname': db_url.path[1:],
+            'user': db_url.username,
+            'password': db_url.password,
+            'host': db_url.hostname,
+            'port': db_url.port or '5432'
+        }
     
     conn = None
     cur = None

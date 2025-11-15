@@ -11,12 +11,15 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 app.permanent_session_lifetime = timedelta(days=7)
 
-
-
-# Replace DB_CONFIG section with this:
+# Database Configuration - Works for both local and production
 if os.environ.get('DATABASE_URL'):
     # Production - Parse Render database URL
-    db_url = urlparse(os.environ.get('DATABASE_URL'))
+    db_url_str = os.environ.get('DATABASE_URL')
+    # Fix Render's postgres:// to postgresql://
+    if db_url_str.startswith('postgres://'):
+        db_url_str = db_url_str.replace('postgres://', 'postgresql://', 1)
+    
+    db_url = urlparse(db_url_str)
     DB_CONFIG = {
         'dbname': db_url.path[1:],
         'user': db_url.username,
@@ -25,7 +28,6 @@ if os.environ.get('DATABASE_URL'):
         'port': db_url.port or '5432'
     }
 else:
-
     # Development - Local database
     DB_CONFIG = {
         'dbname': 'todo_db',
@@ -34,14 +36,6 @@ else:
         'host': 'localhost',
         'port': '5432'
     }
-# Database Configuration
-DB_CONFIG = {
-    'dbname': 'todo_db',
-    'user': 'todo_user',
-    'password': 'thinkpad',
-    'host': 'localhost',
-    'port': '5432'
-}
 
 def get_db_connection():
     """Establish database connection with error handling"""
@@ -185,14 +179,12 @@ def dashboard():
     try:
         cur = conn.cursor()
         
-        # Get user's categories
         cur.execute(
             'SELECT id, name, color FROM categories WHERE user_id = %s ORDER BY name',
             (session['user_id'],)
         )
         categories = cur.fetchall()
         
-        # Get all todos with category info
         cur.execute(
             '''SELECT t.id, t.title, t.description, t.priority, t.status, 
                       c.name, c.color, t.due_date, t.created_at
@@ -215,7 +207,6 @@ def dashboard():
         )
         todos = cur.fetchall()
         
-        # Calculate stats
         cur.execute(
             '''SELECT 
                    COUNT(*) as total,
