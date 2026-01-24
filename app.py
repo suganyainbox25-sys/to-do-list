@@ -1,56 +1,38 @@
-# app.py - Enhanced Flask Application with Categories & Priorities
+# app.py - Todo List Application (Vercel Compatible - FIXED)
 
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 import psycopg2
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import timedelta, datetime
+from datetime import timedelta
 import os
-from urllib.parse import urlparse
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(24))
 app.permanent_session_lifetime = timedelta(days=7)
-
-# Database Configuration - Works for both local and production
-if os.environ.get('DATABASE_URL'):
-    # Production - Parse Render database URL
-    db_url_str = os.environ.get('DATABASE_URL')
-    # Fix Render's postgres:// to postgresql://
-    if db_url_str.startswith('postgres://'):
-        db_url_str = db_url_str.replace('postgres://', 'postgresql://', 1)
-    
-    db_url = urlparse(db_url_str)
-    DB_CONFIG = {
-        'dbname': db_url.path[1:],
-        'user': db_url.username,
-        'password': db_url.password,
-        'host': db_url.hostname,
-        'port': db_url.port or '5432'
-    }
-else:
-    # Development - Local database
-    DB_CONFIG = {
-        'dbname': 'todo_db',
-        'user': 'todo_user',
-        'password': 'thinkpad',
-        'host': 'localhost',
-        'port': '5432'
-    }
 
 def get_db_connection():
     """Establish database connection with error handling"""
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
+        db_url = os.environ.get('DATABASE_URL')
+        print(f"🔵 DATABASE_URL exists: {bool(db_url)}")
+        
+        if not db_url:
+            print("❌ DATABASE_URL not set!")
+            return None
+        
+        # Ensure postgresql:// format
+        if db_url.startswith('postgres://'):
+            db_url = db_url.replace('postgres://', 'postgresql://', 1)
+        
+        print(f"🔵 Connecting to database...")
+        conn = psycopg2.connect(db_url)
+        print("✅ Database connected successfully")
         return conn
-    except psycopg2.OperationalError as e:
-        print(f"Database connection error: {e}")
-        return None
     except Exception as e:
-        print(f"Unexpected error: {e}")
+        print(f"❌ Database connection error: {e}")
         return None
 
 # Routes
-
 @app.route('/')
 def landing():
     """Landing page"""
@@ -65,6 +47,7 @@ def register():
         return redirect(url_for('dashboard'))
     
     if request.method == 'POST':
+        print("🔵 Registration attempt started")
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
         
@@ -81,37 +64,42 @@ def register():
             return render_template('register.html')
         
         conn = get_db_connection()
-        if conn is None:
+        if not conn:
+            print("❌ Database connection failed in register")
             flash('Database connection error. Please try again later.', 'error')
             return render_template('register.html')
         
-        cur = None
         try:
+            print(f"🔵 Checking if username exists: {username}")
             cur = conn.cursor()
-            cur.execute('SELECT id FROM users WHERE username = %s', (username,))
+            cur.execute('SELECT id FROM todo_users WHERE username = %s', (username,))
             if cur.fetchone():
+                print(f"❌ Username already exists: {username}")
                 flash('Username already exists. Please choose another.', 'error')
+                cur.close()
+                conn.close()
                 return render_template('register.html')
             
+            print(f"🔵 Creating new user: {username}")
             hashed_password = generate_password_hash(password, method='pbkdf2:sha256')
             cur.execute(
-                'INSERT INTO users (username, password) VALUES (%s, %s)',
+                'INSERT INTO todo_users (username, password) VALUES (%s, %s)',
                 (username, hashed_password)
             )
             conn.commit()
+            cur.close()
+            conn.close()
             
+            print(f"✅ Registration successful for {username}")
             flash('Registration successful! Please log in.', 'success')
             return redirect(url_for('login'))
             
         except Exception as e:
-            conn.rollback()
-            flash('Registration failed. Please try again.', 'error')
-            print(f"Registration error: {e}")
-        finally:
-            if cur:
-                cur.close()
+            print(f"❌ Registration error: {e}")
             if conn:
+                conn.rollback()
                 conn.close()
+            flash('Registration failed. Please try again.', 'error')
     
     return render_template('register.html')
 
@@ -122,6 +110,7 @@ def login():
         return redirect(url_for('dashboard'))
     
     if request.method == 'POST':
+        print("🔵 Login attempt started")
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
         
@@ -129,58 +118,61 @@ def login():
             flash('Please enter both username and password', 'error')
             return render_template('login.html')
         
+        print(f"🔵 Attempting login for user: {username}")
+        
         conn = get_db_connection()
-        if conn is None:
+        if not conn:
+            print("❌ Database connection failed in login")
             flash('Database connection error. Please try again later.', 'error')
             return render_template('login.html')
         
-        cur = None
         try:
             cur = conn.cursor()
+            print("🔵 Executing database query")
             cur.execute(
-                'SELECT id, username, password FROM users WHERE username = %s',
+                'SELECT id, username, password FROM todo_users WHERE username = %s',
                 (username,)
             )
             user = cur.fetchone()
+            cur.close()
+            conn.close()
             
             if user and check_password_hash(user[2], password):
+                print(f"✅ Login successful for {username}")
                 session.permanent = True
                 session['user_id'] = user[0]
                 session['username'] = user[1]
                 flash(f'Welcome back, {user[1]}!', 'success')
                 return redirect(url_for('dashboard'))
             else:
+                print(f"❌ Invalid credentials for {username}")
                 flash('Invalid username or password', 'error')
                 
         except Exception as e:
-            flash('Login failed. Please try again.', 'error')
-            print(f"Login error: {e}")
-        finally:
-            if cur:
-                cur.close()
+            print(f"❌ Error during login: {e}")
             if conn:
                 conn.close()
+            flash('An error occurred. Please try again.', 'error')
     
     return render_template('login.html')
 
 @app.route('/dashboard')
 def dashboard():
-    """Enhanced dashboard with stats and categories"""
+    """Dashboard with stats and categories"""
     if 'user_id' not in session:
         flash('Please log in to access the dashboard', 'error')
         return redirect(url_for('login'))
     
     conn = get_db_connection()
-    if conn is None:
+    if not conn:
         flash('Database connection error', 'error')
         return render_template('dashboard.html', todos=[], categories=[], stats={})
     
-    cur = None
     try:
         cur = conn.cursor()
         
         cur.execute(
-            'SELECT id, name, color FROM categories WHERE user_id = %s ORDER BY name',
+            'SELECT id, name, color FROM todo_categories WHERE user_id = %s ORDER BY name',
             (session['user_id'],)
         )
         categories = cur.fetchall()
@@ -188,8 +180,8 @@ def dashboard():
         cur.execute(
             '''SELECT t.id, t.title, t.description, t.priority, t.status, 
                       c.name, c.color, t.due_date, t.created_at
-               FROM todos t
-               LEFT JOIN categories c ON t.category_id = c.id
+               FROM todo_items t
+               LEFT JOIN todo_categories c ON t.category_id = c.id
                WHERE t.user_id = %s 
                ORDER BY 
                    CASE t.status 
@@ -213,7 +205,7 @@ def dashboard():
                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
                    SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress
-               FROM todos 
+               FROM todo_items 
                WHERE user_id = %s''',
             (session['user_id'],)
         )
@@ -225,21 +217,20 @@ def dashboard():
             'in_progress': stats_row[3] or 0
         }
         
+        cur.close()
+        conn.close()
         return render_template('dashboard.html', todos=todos, categories=categories, stats=stats)
         
     except Exception as e:
-        flash('Error loading dashboard', 'error')
-        print(f"Dashboard error: {e}")
-        return render_template('dashboard.html', todos=[], categories=[], stats={})
-    finally:
-        if cur:
-            cur.close()
+        print(f"❌ Dashboard error: {e}")
         if conn:
             conn.close()
+        flash('Error loading dashboard', 'error')
+        return render_template('dashboard.html', todos=[], categories=[], stats={})
 
 @app.route('/add', methods=['POST'])
 def add_todo():
-    """Add new todo with enhanced features"""
+    """Add new todo"""
     if 'user_id' not in session:
         flash('Please log in first', 'error')
         return redirect(url_for('login'))
@@ -261,30 +252,28 @@ def add_todo():
         due_date = None
     
     conn = get_db_connection()
-    if conn is None:
+    if not conn:
         flash('Database connection error', 'error')
         return redirect(url_for('dashboard'))
     
-    cur = None
     try:
         cur = conn.cursor()
         cur.execute(
-            '''INSERT INTO todos (user_id, title, description, priority, category_id, due_date, status) 
+            '''INSERT INTO todo_items (user_id, title, description, priority, category_id, due_date, status) 
                VALUES (%s, %s, %s, %s, %s, %s, 'pending')''',
             (session['user_id'], title, description, priority, category_id, due_date)
         )
         conn.commit()
+        cur.close()
+        conn.close()
         flash('Task added successfully!', 'success')
         
     except Exception as e:
-        conn.rollback()
-        flash('Failed to add task', 'error')
-        print(f"Add todo error: {e}")
-    finally:
-        if cur:
-            cur.close()
+        print(f"❌ Add todo error: {e}")
         if conn:
+            conn.rollback()
             conn.close()
+        flash('Failed to add task', 'error')
     
     return redirect(url_for('dashboard'))
 
@@ -298,15 +287,14 @@ def update_todo_status(todo_id):
     status = request.form.get('status', 'pending')
     
     conn = get_db_connection()
-    if conn is None:
+    if not conn:
         flash('Database connection error', 'error')
         return redirect(url_for('dashboard'))
     
-    cur = None
     try:
         cur = conn.cursor()
         cur.execute(
-            '''UPDATE todos 
+            '''UPDATE todo_items 
                SET status = %s, updated_at = CURRENT_TIMESTAMP 
                WHERE id = %s AND user_id = %s''',
             (status, todo_id, session['user_id'])
@@ -317,16 +305,16 @@ def update_todo_status(todo_id):
             flash('Task status updated!', 'success')
         else:
             flash('Task not found', 'error')
+        
+        cur.close()
+        conn.close()
             
     except Exception as e:
-        conn.rollback()
-        flash('Failed to update task', 'error')
-        print(f"Update error: {e}")
-    finally:
-        if cur:
-            cur.close()
+        print(f"❌ Update error: {e}")
         if conn:
+            conn.rollback()
             conn.close()
+        flash('Failed to update task', 'error')
     
     return redirect(url_for('dashboard'))
 
@@ -338,15 +326,14 @@ def delete_todo(todo_id):
         return redirect(url_for('login'))
     
     conn = get_db_connection()
-    if conn is None:
+    if not conn:
         flash('Database connection error', 'error')
         return redirect(url_for('dashboard'))
     
-    cur = None
     try:
         cur = conn.cursor()
         cur.execute(
-            'DELETE FROM todos WHERE id = %s AND user_id = %s',
+            'DELETE FROM todo_items WHERE id = %s AND user_id = %s',
             (todo_id, session['user_id'])
         )
         conn.commit()
@@ -355,16 +342,16 @@ def delete_todo(todo_id):
             flash('Task deleted successfully!', 'success')
         else:
             flash('Task not found', 'error')
+        
+        cur.close()
+        conn.close()
             
     except Exception as e:
-        conn.rollback()
-        flash('Failed to delete task', 'error')
-        print(f"Delete error: {e}")
-    finally:
-        if cur:
-            cur.close()
+        print(f"❌ Delete error: {e}")
         if conn:
+            conn.rollback()
             conn.close()
+        flash('Failed to delete task', 'error')
     
     return redirect(url_for('dashboard'))
 
@@ -383,29 +370,27 @@ def add_category():
         return redirect(url_for('dashboard'))
     
     conn = get_db_connection()
-    if conn is None:
+    if not conn:
         flash('Database connection error', 'error')
         return redirect(url_for('dashboard'))
     
-    cur = None
     try:
         cur = conn.cursor()
         cur.execute(
-            'INSERT INTO categories (user_id, name, color) VALUES (%s, %s, %s)',
+            'INSERT INTO todo_categories (user_id, name, color) VALUES (%s, %s, %s)',
             (session['user_id'], name, color)
         )
         conn.commit()
+        cur.close()
+        conn.close()
         flash('Category added successfully!', 'success')
         
     except Exception as e:
-        conn.rollback()
-        flash('Failed to add category', 'error')
-        print(f"Add category error: {e}")
-    finally:
-        if cur:
-            cur.close()
+        print(f"❌ Add category error: {e}")
         if conn:
+            conn.rollback()
             conn.close()
+        flash('Failed to add category', 'error')
     
     return redirect(url_for('dashboard'))
 
@@ -425,5 +410,9 @@ def not_found(e):
 def server_error(e):
     return render_template('500.html'), 500
 
+# Export app for Vercel
+app = app
+
 if __name__ == '__main__':
-    app.run(debug=True, host='127.0.0.1', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=False, host='0.0.0.0', port=port)
